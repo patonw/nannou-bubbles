@@ -1,3 +1,4 @@
+use std::time::Duration;
 use nannou::{rand, prelude::*};
 use palette::named;
 use structopt::StructOpt;
@@ -8,9 +9,15 @@ use glam::f32::Vec2;
 
 #[derive(Debug, StructOpt)]
 pub struct Opts {
+    /// Maximum angular velocity in radians per second
     #[structopt(short, long, default_value="1.0")]
+    speed: f32,
+
+    /// Maximum bubble growth rate in pixels per second
+    #[structopt(short, long, default_value="100.0")]
     rate: f32,
 
+    /// Maximum bubbles to render simultaneously
     #[structopt(short, long, default_value="1")]
     num_dots: u8,
 }
@@ -24,7 +31,7 @@ type Rgba = Srgba<u8>;
 
 trait Nannou {
     fn display(&self, draw: &Draw);
-    fn update(&mut self);
+    fn update(&mut self, delta: &Duration);
 }
 
 fn as_nn(c: palette::rgb::Rgb<palette::encoding::Srgb, u8>) -> Rgb {
@@ -69,7 +76,7 @@ struct Dot {
     #[builder(setter(into), default)]
     origin: Point,
     #[builder(setter(into), default)]
-    dest: Point,
+    pivot: Point,
     #[builder(default=10.0)]
     radius: f32,
     #[builder(default=200.0)]
@@ -78,6 +85,8 @@ struct Dot {
     speed: f32,
     #[builder(default=OPTS.rate)]
     growth_rate: f32,
+    #[builder(default=Duration::from_secs(10))]
+    ttl: Duration,
 }
 
 impl Nannou for Dot {
@@ -89,18 +98,17 @@ impl Nannou for Dot {
             .x_y(self.origin.x, self.origin.y);
     }
 
-    fn update(&mut self) {
+    fn update(&mut self, delta: &Duration) {
+        self.ttl = self.ttl.checked_sub(*delta).unwrap_or(Duration::ZERO);
+
+        let delta = delta.as_secs_f32();
         if self.radius < self.max_radius {
-            self.radius += self.growth_rate;
+            self.radius += self.growth_rate * delta;
         }
 
-        let delta = self.dest - self.origin;
-        if delta.length() > self.speed {
-            self.origin += delta.normalize() * self.speed;
-        }
-        else {
-            self.origin = self.dest;
-        }
+        let offset = self.pivot - self.origin;
+        let step = self.speed * delta;
+        self.origin = self.pivot + Vec2::from_angle(step).rotate(-offset);
     }
 }
 
@@ -117,8 +125,22 @@ impl Nannou for Model {
         self.dots.iter().for_each(|d| d.display(draw));
     }
 
-    fn update(&mut self) {
-        self.dots.iter_mut().for_each(|d| d.update());
+    fn update(&mut self, delta: &Duration) {
+        self.dots.iter_mut().for_each(|d| d.update(delta));
+        self.dots.retain(|d| d.ttl > Duration::ZERO && d.radius < d.max_radius);
+
+        if self.dots.len() < OPTS.num_dots.into() {
+            self.dots.push(
+                Dot::builder()
+                .color(random_color())
+                .origin(rand_point())
+                .pivot(rand_point())
+                .max_radius(rand::random_range(20.0, 500.0))
+                .speed(rand::random_range(-OPTS.speed, OPTS.speed))
+                .growth_rate(rand::random_range(1.0, OPTS.rate))
+                .ttl(Duration::from_secs_f32(rand::random_range(1.0, 10.0)))
+                .build());
+        }
     }
 }
 
@@ -135,17 +157,7 @@ impl Default for Model {
     fn default() -> Self {
         Model {
             bg_color: Color::Honeydew.into(),
-            dots: (0..OPTS.num_dots)
-                .map(|i| i as f32)
-                .map(|_| Dot::builder()
-                     .color(random_color())
-                     .origin(rand_point())
-                     .dest(rand_point())
-                     .max_radius(rand::random_range(20.0, 500.0))
-                     .speed(rand::random_range(1.0, 20.0).ln())
-                     .growth_rate(rand::random_range(1.0, 20.0).ln())
-                     .build())
-                .collect(),
+            dots: Vec::new(),
         }
     }
 }
@@ -154,8 +166,8 @@ fn model(_app: &App) -> Model {
     Model::default()
 }
 
-fn update(_app: &App, model: &mut Model, _update: Update) {
-    model.update();
+fn update(app: &App, model: &mut Model, _update: Update) {
+    model.update(&app.duration.since_prev_update);
 }
 
 fn view(app: &App, model: &Model, frame: Frame) {
@@ -167,7 +179,10 @@ fn view(app: &App, model: &Model, frame: Frame) {
 
 fn main() {
     pretty_env_logger::init();
-    info!("Hello world!");
-    nannou::app(model).update(update).simple_window(view).run();
+    info!("Options: {:?}", *OPTS);
+    nannou::app(model)
+        .update(update)
+        .simple_window(view)
+        .run();
 }
 
