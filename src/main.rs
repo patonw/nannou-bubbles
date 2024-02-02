@@ -119,29 +119,36 @@ impl Nannou for Dot {
     }
 }
 
-struct Model {
-    egui: Egui,
-    bg_color: Rgb,
-    dots: Vec<Dot>,
+#[derive(Debug, Copy, Clone)]
+struct Settings {
     paused: bool,
+    bg_color: Rgb,
     max_count: u8,
     max_speed: f32,
     max_rate: f32,
     scale: f32,
     shape: f32,
+}
+
+struct Model {
+    egui: Egui,
+    settings: Settings,
+    dots: Vec<Dot>,
     x_limit: u64,
 }
 
 impl Nannou for Model {
     fn display(&self, draw: &Draw) {
         draw.background()
-            .color(self.bg_color);
+            .color(self.settings.bg_color);
 
         self.dots.iter().for_each(|d| d.display(draw));
     }
 
     fn update(&mut self, update: &Update) {
         let egui = &mut self.egui;
+        let settings = &mut self.settings;
+
         egui.set_elapsed_time(update.since_start);
 
         let ctx = egui.begin_frame();
@@ -157,25 +164,28 @@ impl Nannou for Model {
                         self.dots.clear();
                     }
 
-                    let paused = self.paused;
-                    ui.toggle_value(&mut self.paused, if paused {"Resume" } else {"Pause"});
+                    let paused = settings.paused;
+                    ui.toggle_value(&mut settings.paused, if paused {"Resume" } else {"Pause"});
                 });
 
                 ui.label("Max Dots:");
-                ui.add(egui::Slider::new(&mut self.max_count, 1..=255));
+                ui.add(egui::Slider::new(&mut settings.max_count, 1..=255));
 
                 ui.label("Max Speed:");
-                ui.add(egui::Slider::new(&mut self.max_speed, 0.0..=10.0));
+                ui.add(egui::Slider::new(&mut settings.max_speed, 0.0..=10.0));
 
-                ui.label("Max Growth Rate:");
-                ui.add(egui::Slider::new(&mut self.max_rate, 0.0..=1000.0));
+                ui.label("Growth Rate:");
+                ui.add(egui::Slider::new(&mut settings.max_rate, 0.0..=1000.0));
+
+                ui.add_space(16.0);
+                ui.heading("Radius Distribution");
 
                 ui.label("Shape");
-                ui.add(egui::Slider::new(&mut self.shape, 1.0..=500.0)
+                ui.add(egui::Slider::new(&mut settings.shape, 1.0..=500.0)
                        .logarithmic(true));
 
                 ui.label("Scale");
-                ui.add(egui::Slider::new(&mut self.scale, 1.0..=500.0)
+                ui.add(egui::Slider::new(&mut settings.scale, 1.0..=500.0)
                        .logarithmic(true));
             });
 
@@ -185,6 +195,8 @@ impl Nannou for Model {
             .show(&ctx, |ui| {
                 Plot::new("Dist")
                     .view_aspect(1.5)
+                    .include_x(0.0)
+                    .include_x(settings.max_speed)
                     .include_y(20.0)
                     .y_axis_width(2)
                     .show(ui, |plt| {
@@ -220,6 +232,7 @@ impl Nannou for Model {
                 Plot::new("Dist")
                     .legend(Default::default())
                     .view_aspect(1.5)
+                    .include_x(0.0)
                     .include_x(x_limit)
                     .include_y(50.0)
                     .y_axis_width(2)
@@ -268,29 +281,29 @@ impl Nannou for Model {
 
         if dump {
             // Some debugging data
-            dbg!(&self.dots);
+            dbg!(&settings, &self.dots);
         }
 
-        if self.paused {
+        if settings.paused {
             return
         }
 
         self.dots.iter_mut().for_each(|d| d.update(update));
         self.dots.retain(|d| d.ttl > Duration::ZERO && d.radius < d.max_radius);
 
-        let radius_dist = Gamma::new(self.shape, self.scale).unwrap();
+        let radius_dist = Gamma::new(settings.shape, settings.scale).unwrap();
         let max_radius: f32 = radius_dist.sample(&mut rand::thread_rng());
         let max_radius = max_radius.clamp(0.0, 512.0);
 
-        if self.dots.len() < self.max_count.into() {
+        if self.dots.len() < settings.max_count.into() {
             self.dots.push(
                 Dot::builder()
                 .color(random_color())
                 .origin(rand_point())
                 .pivot(rand_point())
                 .max_radius(max_radius)
-                .speed(rand::random_range(-self.max_speed, self.max_speed))
-                .growth_rate(rand::random_range(1.0, self.max_rate))
+                .speed(rand::random_range(-settings.max_speed, settings.max_speed))
+                .growth_rate(rand::random_range(1.0, settings.max_rate))
                 .ttl(Duration::from_secs_f32(rand::random_range(1.0, 10.0)))
                 .build());
         }
@@ -315,16 +328,20 @@ fn model(app: &App) -> Model {
     let window = app.window(wid).unwrap();
     let egui = Egui::from_window(&window);
 
-    Model {
-        egui,
+    let settings = Settings {
         bg_color: Color::DimGray.into(),
-        dots: Vec::new(),
         paused: false,
         max_count: OPTS.num_dots.into(),
         max_speed: OPTS.speed,
         max_rate: OPTS.rate,
         scale: 10.0,
         shape: 10.0,
+    };
+
+    Model {
+        egui,
+        settings,
+        dots: Vec::new(),
         x_limit: 100,
     }
 }

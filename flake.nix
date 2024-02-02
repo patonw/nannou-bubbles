@@ -36,27 +36,14 @@
       xorg.libXcursor
 
       vulkan-loader
-      #vulkan-extension-layer
-      #vulkan-utility-libraries
     ];
     dev-tools = with pkgs; [
       neovim
-
-      #vulkan-helper
-      #vulkan-tools
-      #vk-bootstrap
     ];
   in
   {
-    packages.hello = pkgs.hello;
-    #packages.default = self.packages.${system}.hello;
     packages.default = naersk'.buildPackage {
       src = ./.;
-    };
-
-    defaultApp = {
-      type = "app";
-      program = "${self.packages.${system}.hello}/bin/hello";
     };
 
     devShell = with pkgs; mkShell {
