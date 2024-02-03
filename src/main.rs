@@ -1,5 +1,6 @@
 use std::time::Duration;
-use nannou::{rand, prelude::*};
+use std::collections::VecDeque;
+use nannou::{color, rand, prelude::*};
 use palette::named;
 use structopt::StructOpt;
 use lazy_static::lazy_static;
@@ -91,6 +92,8 @@ struct Dot {
     speed: f32,
     #[builder(default=OPTS.rate)]
     growth_rate: f32,
+    #[builder(default=Duration::from_secs(0))]
+    age: Duration,
     #[builder(default=Duration::from_secs(10))]
     ttl: Duration,
 }
@@ -107,6 +110,7 @@ impl Nannou for Dot {
     fn update(&mut self, update: &Update) {
         let delta = update.since_last;
         self.ttl = self.ttl.checked_sub(delta).unwrap_or(Duration::ZERO);
+        self.age += delta;
 
         let delta = delta.as_secs_f32();
         if self.radius < self.max_radius {
@@ -135,6 +139,20 @@ struct Model {
     settings: Settings,
     dots: Vec<Dot>,
     x_limit: u64,
+    ring_buf: VecDeque<f32>,
+}
+
+pub trait ColorExt<C> {
+    fn with_alpha<A>(&self, alpha: A) -> color::Alpha<C,A>;
+}
+
+impl ColorExt<Rgb> for Rgb {
+    fn with_alpha<A>(&self, alpha: A) -> color::Alpha<Rgb,A> {
+        color::Alpha {
+            color: *self,
+            alpha,
+        }
+    }
 }
 
 impl Nannou for Model {
@@ -143,6 +161,27 @@ impl Nannou for Model {
             .color(self.settings.bg_color);
 
         self.dots.iter().for_each(|d| d.display(draw));
+
+        const RADIUS: f32 = 100.0;
+
+        let rads = (0..=360).map(|d| (d as f32).to_radians());
+        let in_points = rads.clone().map(|r| vec2(0.0, RADIUS).rotate(r)).collect::<Vec<_>>();
+        let out_points = rads.enumerate().map(|(d, r)| {
+            vec2(0.0, RADIUS + 100.0 * self.ring_buf[d % 360]).rotate(-r)
+        }).collect::<Vec<_>>();
+
+        let all_points = [in_points, out_points.clone()].concat();
+        draw.polygon()
+            .color(WHITE.with_alpha(0.2))
+            //.stroke_weight(2.0)
+            //.stroke_color(BLACK)
+            .points(all_points);
+
+        // Only outside stroke
+        draw.polyline()
+            .weight(3.0)
+            .color(STEELBLUE.with_alpha(0.8))
+            .points_closed(out_points.clone());
     }
 
     fn update(&mut self, update: &Update) {
@@ -288,6 +327,14 @@ impl Nannou for Model {
             return
         }
 
+        let avg_age = (!self.dots.is_empty())
+            .then(|| self.dots.iter().map(|d| d.age.as_secs_f32()).sum())
+            .map(|s: f32| s / 10.0 / self.dots.len() as f32)
+            .unwrap_or(0.0);
+
+        self.ring_buf.pop_back();
+        self.ring_buf.push_front(avg_age);
+
         self.dots.iter_mut().for_each(|d| d.update(update));
         self.dots.retain(|d| d.ttl > Duration::ZERO && d.radius < d.max_radius);
 
@@ -338,11 +385,15 @@ fn model(app: &App) -> Model {
         shape: 10.0,
     };
 
+    let mut ring_buf = VecDeque::new();
+    ring_buf.resize(360, 0.0);
+
     Model {
         egui,
         settings,
         dots: Vec::new(),
         x_limit: 100,
+        ring_buf,
     }
 }
 
